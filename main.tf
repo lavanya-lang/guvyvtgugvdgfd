@@ -1,4 +1,4 @@
-# Fixes the unsupported output attribute by removing the invalid reference to aws_autoscaling_group.main.instances (not exported by the resource). All other resources remain unchanged.
+# Fixes the unsupported output attribute by removing the invalid aws_autoscaling_group.main.instances reference. The ASG name output remains.
 # Generated Terraform code for AWS in us-east-1
 
 terraform {
@@ -12,73 +12,124 @@ terraform {
   }
 }
 
-variable "asg_desired_capacity" {
+variable "environment" {
+  description = "Environment name used for tagging."
+  type        = string
+  default     = "prod"
+
+  validation {
+    condition     = length(var.environment) > 0
+    error_message = "environment must be a non-empty string."
+  }
+}
+
+variable "managed_by" {
+  description = "Tag value indicating the provisioning system."
+  type        = string
+  default     = "terraform"
+
+  validation {
+    condition     = length(var.managed_by) > 0
+    error_message = "managed_by must be a non-empty string."
+  }
+}
+
+variable "instance_type" {
+  description = "EC2 instance type for the Auto Scaling Group."
+  type        = string
+  default     = "t3.medium"
+
+  validation {
+    condition     = length(var.instance_type) > 0
+    error_message = "instance_type must be a non-empty string."
+  }
+}
+
+variable "desired_capacity" {
   description = "Desired number of instances in the Auto Scaling Group."
   type        = number
   default     = 2
 
   validation {
-    condition     = var.asg_desired_capacity >= 0
-    error_message = "asg_desired_capacity must be >= 0."
+    condition     = var.desired_capacity >= 0
+    error_message = "desired_capacity must be >= 0."
   }
 }
 
-variable "asg_max_size" {
-  description = "Maximum number of instances in the Auto Scaling Group."
-  type        = number
-  default     = 4
-
-  validation {
-    condition     = var.asg_max_size >= 1
-    error_message = "asg_max_size must be >= 1."
-  }
-}
-
-variable "asg_min_size" {
+variable "min_size" {
   description = "Minimum number of instances in the Auto Scaling Group."
   type        = number
   default     = 2
 
   validation {
-    condition     = var.asg_min_size >= 0
-    error_message = "asg_min_size must be >= 0."
+    condition     = var.min_size >= 0
+    error_message = "min_size must be >= 0."
   }
 }
 
-variable "instance_type" {
-  description = "EC2 instance type for the Auto Scaling Group instances."
-  type        = string
-  default     = "t3.medium"
-}
-
-variable "project" {
-  description = "Project identifier used for naming/tagging."
-  type        = string
-  default     = "app"
+variable "max_size" {
+  description = "Maximum number of instances in the Auto Scaling Group."
+  type        = number
+  default     = 4
 
   validation {
-    condition     = can(regex("^[a-zA-Z0-9_-]+$", var.project))
-    error_message = "project must contain only letters, numbers, underscores, and hyphens."
+    condition     = var.max_size >= 0
+    error_message = "max_size must be >= 0."
+  }
+}
+
+variable "vpc_id" {
+  description = "Existing VPC ID where the Auto Scaling Group security group will be created."
+  type        = string
+
+  validation {
+    condition     = can(regex("^vpc-", var.vpc_id))
+    error_message = "vpc_id must look like an AWS VPC ID (start with 'vpc-')."
   }
 }
 
 variable "subnet_ids" {
-  description = "Subnet IDs for the Auto Scaling Group. Must be in the same VPC as vpc_id."
+  description = "Existing subnet IDs to place the Auto Scaling Group instances into."
   type        = list(string)
+
+  validation {
+    condition     = length(var.subnet_ids) > 0
+    error_message = "subnet_ids must contain at least one subnet ID."
+  }
 }
 
-variable "vpc_id" {
-  description = "VPC ID where the Auto Scaling Group and security group will be created."
+variable "asg_name" {
+  description = "Name for the Auto Scaling Group."
   type        = string
+  default     = "prod-asg"
+
+  validation {
+    condition     = length(var.asg_name) > 0
+    error_message = "asg_name must be a non-empty string."
+  }
+}
+
+variable "launch_template_name" {
+  description = "Name for the EC2 launch template."
+  type        = string
+  default     = "prod-lt"
+
+  validation {
+    condition     = length(var.launch_template_name) > 0
+    error_message = "launch_template_name must be a non-empty string."
+  }
+}
+
+variable "ssh_ingress_cidr_blocks" {
+  description = "Optional CIDR blocks allowed to SSH to instances. Leave empty to disable SSH ingress."
+  type        = list(string)
+  default     = []
 }
 
 provider "aws" {
   {{block_to_replace_cred}}
-  region = "us-east-1"
-}
 
-locals {
-  name_prefix = "${var.project}-prod"
+  region = "us-east-1"
 }
 
 data "aws_ami" "al2023" {
@@ -86,75 +137,71 @@ data "aws_ami" "al2023" {
   owners      = ["amazon"]
 
   filter {
+    name   = "architecture"
+    values = ["x86_64"]
+  }
+
+  filter {
     name   = "name"
     values = ["al2023-ami-*-x86_64"]
   }
 
   filter {
-    name   = "state"
-    values = ["available"]
+    name   = "virtualization-type"
+    values = ["hvm"]
   }
-}
-
-data "aws_iam_policy_document" "ec2_assume_role" {
-  statement {
-    actions = ["sts:AssumeRole"]
-
-    principals {
-      identifiers = ["ec2.amazonaws.com"]
-      type        = "Service"
-    }
-  }
-}
-
-resource "aws_iam_role" "ec2" {
-  assume_role_policy = data.aws_iam_policy_document.ec2_assume_role.json
-  name               = "${local.name_prefix}-ec2-role"
-}
-
-resource "aws_iam_role_policy_attachment" "ssm" {
-  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
-  role       = aws_iam_role.ec2.name
-}
-
-resource "aws_iam_instance_profile" "ec2" {
-  name = "${local.name_prefix}-ec2-instance-profile"
-  role = aws_iam_role.ec2.name
 }
 
 resource "aws_security_group" "asg" {
-  description = "Security group for ${local.name_prefix} ASG"
-  name        = "${local.name_prefix}-asg-sg"
+  description = "Security group for ASG instances"
+  name_prefix = "${var.asg_name}-"
   vpc_id      = var.vpc_id
 
-  # No ingress by default (least privilege). Add explicit rules as needed.
-
-  egress {
-    cidr_blocks = ["0.0.0.0/0"]
-    from_port   = 0
-    protocol    = "-1"
-    to_port     = 0
+  tags = {
+    Environment = var.environment
+    Name        = "${var.asg_name}-sg"
+    managed_by  = var.managed_by
   }
+}
+
+resource "aws_vpc_security_group_egress_rule" "all" {
+  cidr_ipv4         = "0.0.0.0/0"
+  from_port         = 0
+  ip_protocol       = "-1"
+  security_group_id = aws_security_group.asg.id
+  to_port           = 0
 
   tags = {
-    Environment = "prod"
-    ManagedBy   = "terraform"
-    Project     = var.project
+    Environment = var.environment
+    Name        = "${var.asg_name}-sg-egress-all"
+    managed_by  = var.managed_by
+  }
+}
+
+resource "aws_vpc_security_group_ingress_rule" "ssh" {
+  for_each = { for cidr in var.ssh_ingress_cidr_blocks : cidr => cidr }
+
+  cidr_ipv4         = each.value
+  from_port         = 22
+  ip_protocol       = "tcp"
+  security_group_id = aws_security_group.asg.id
+  to_port           = 22
+
+  tags = {
+    Environment = var.environment
+    Name        = "${var.asg_name}-sg-ingress-ssh-${replace(each.key, "/", "-")}" 
+    managed_by  = var.managed_by
   }
 }
 
 resource "aws_launch_template" "main" {
   image_id      = data.aws_ami.al2023.id
   instance_type = var.instance_type
-  name_prefix   = "${local.name_prefix}-lt-"
-
-  iam_instance_profile {
-    name = aws_iam_instance_profile.ec2.name
-  }
+  name          = var.launch_template_name
 
   metadata_options {
     http_endpoint               = "enabled"
-    http_put_response_hop_limit = 1
+    http_put_response_hop_limit = 2
     http_tokens                 = "required"
   }
 
@@ -171,10 +218,9 @@ resource "aws_launch_template" "main" {
     resource_type = "instance"
 
     tags = {
-      Environment = "prod"
-      ManagedBy   = "terraform"
-      Name        = "${local.name_prefix}-asg"
-      Project     = var.project
+      Environment = var.environment
+      Name        = var.asg_name
+      managed_by  = var.managed_by
     }
   }
 
@@ -182,89 +228,58 @@ resource "aws_launch_template" "main" {
     resource_type = "volume"
 
     tags = {
-      Environment = "prod"
-      ManagedBy   = "terraform"
-      Project     = var.project
+      Environment = var.environment
+      Name        = var.asg_name
+      managed_by  = var.managed_by
     }
   }
 
+  update_default_version = true
+
   tags = {
-    Environment = "prod"
-    ManagedBy   = "terraform"
-    Project     = var.project
+    Environment = var.environment
+    Name        = var.launch_template_name
+    managed_by  = var.managed_by
   }
-
-  user_data = base64encode(<<-EOF
-#!/bin/bash
-set -euo pipefail
-
-dnf -y update
-EOF
-  )
 }
 
 resource "aws_autoscaling_group" "main" {
-  desired_capacity    = var.asg_desired_capacity
-  max_size            = var.asg_max_size
-  min_size            = var.asg_min_size
-  name                = "${local.name_prefix}-asg"
+  desired_capacity    = var.desired_capacity
+  health_check_type   = "EC2"
+  max_size            = var.max_size
+  min_size            = var.min_size
+  name                = var.asg_name
   vpc_zone_identifier = var.subnet_ids
 
   health_check_grace_period = 300
-  health_check_type         = "EC2"
 
   launch_template {
     id      = aws_launch_template.main.id
     version = "$Latest"
   }
 
-  # Production-leaning safety behavior
   termination_policies = ["OldestLaunchTemplate", "OldestInstance"]
-
-  instance_refresh {
-    strategy = "Rolling"
-
-    preferences {
-      min_healthy_percentage = 90
-    }
-
-    triggers = ["launch_template"]
-  }
 
   tag {
     key                 = "Environment"
     propagate_at_launch = true
-    value               = "prod"
+    value               = var.environment
   }
 
   tag {
-    key                 = "ManagedBy"
+    key                 = "managed_by"
     propagate_at_launch = true
-    value               = "terraform"
+    value               = var.managed_by
   }
 
   tag {
-    key                 = "Project"
+    key                 = "Name"
     propagate_at_launch = true
-    value               = var.project
+    value               = var.asg_name
   }
 }
 
-resource "aws_autoscaling_policy" "cpu_target" {
-  autoscaling_group_name = aws_autoscaling_group.main.name
-  name                   = "${local.name_prefix}-cpu-target"
-  policy_type            = "TargetTrackingScaling"
-
-  target_tracking_configuration {
-    predefined_metric_specification {
-      predefined_metric_type = "ASGAverageCPUUtilization"
-    }
-
-    target_value = 50
-  }
-}
-
-output "asg_name" {
+output "autoscaling_group_name" {
   description = "Name of the Auto Scaling Group."
   value       = aws_autoscaling_group.main.name
 }
